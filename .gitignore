@@ -203,6 +203,12 @@ cython_debug/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
+# Project artifacts
+checkpoints/
+*.pt
+ans.log
+ans2.log
+
 # Ruff stuff:
 .ruff_cache/
 
@@ -216,3 +222,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# macOS
+.DS_Store
