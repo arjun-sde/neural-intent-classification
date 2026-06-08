@@ -116,8 +116,10 @@ def main() -> None:
         config=config,
     )
     intent_mapping = load_intent_mapping(config.dataset)
+    intent_name = intent_mapping["intents"][prediction]["name"]
 
-    print(intent_mapping["intents"][prediction]["name"])
+    print(f"Intent classified: {intent_name}")
+    print(f"Predicted label id: {prediction}")
 
     if args.show_accuracy:
         accuracy = evaluate_test_set(args.checkpoint)
