@@ -8,18 +8,18 @@ from neural_intent_classification.data.preprocessing import (
     normalize_label,
     pad_sequence,
 )
-from neural_intent_classification.data.vocab import text_to_ids
+from neural_intent_classification.data.tokenizers import BaseTokenizer
 
 
 class IntentDataset(Dataset):
     def __init__(
         self,
         dataset,
-        vocab: dict[str, int],
+        tokenizer: BaseTokenizer,
         config: DatasetConfig,
     ):
         self.dataset = dataset
-        self.vocab = vocab
+        self.tokenizer = tokenizer
         self.config = config
 
     def __len__(self) -> int:
@@ -27,11 +27,7 @@ class IntentDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         row = self.dataset[idx]
-        token_ids = text_to_ids(
-            row["utterance"],
-            self.vocab,
-            self.config,
-        )
+        token_ids = self.tokenizer.encode(row["utterance"])
         padded_ids, length = pad_sequence(
             token_ids,
             self.config.max_length,

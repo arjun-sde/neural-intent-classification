@@ -1,45 +1,42 @@
 from __future__ import annotations
 
-from collections import Counter
+from neural_intent_classification.config import (
+    DatasetConfig,
+    TokenizerConfig,
+)
+from neural_intent_classification.data.tokenizers import build_tokenizer
 
-import nltk
-from nltk.tokenize import word_tokenize
 
-from neural_intent_classification.config import DatasetConfig
+def _default_word_tokenizer(
+    config: DatasetConfig | None = None,
+):
+    dataset_config = config or DatasetConfig()
+    tokenizer = build_tokenizer(
+        dataset_config=dataset_config,
+        tokenizer_config=TokenizerConfig(),
+    )
+    tokenizer.prepare()
+    return tokenizer
 
 
 def download_nltk_resources() -> None:
-    nltk.download("punkt", quiet=True)
-    nltk.download("punkt_tab", quiet=True)
+    _default_word_tokenizer()
 
 
 def tokenize(text: str) -> list[str]:
-    tokens = word_tokenize(text.lower())
-    return [
-        token
-        for token in tokens
-        if any(char.isalnum() for char in token)
-    ]
+    return _default_word_tokenizer().tokenize(text)
 
 
 def build_vocab(
     train_dataset,
     config: DatasetConfig,
 ) -> dict[str, int]:
-    word_freq: Counter[str] = Counter()
-
-    for row in train_dataset:
-        word_freq.update(tokenize(row["utterance"]))
-
-    vocab = {
-        config.pad_token: config.pad_token_id,
-        config.unk_token: config.unk_token_id,
-    }
-
-    for word in word_freq:
-        vocab[word] = len(vocab)
-
-    return vocab
+    tokenizer = _default_word_tokenizer(config)
+    tokenizer.fit(
+        row["utterance"]
+        for row in train_dataset
+    )
+    return tokenizer.vocab or {}
 
 
 def text_to_ids(
@@ -47,8 +44,6 @@ def text_to_ids(
     vocab: dict[str, int],
     config: DatasetConfig,
 ) -> list[int]:
-    token_ids = [
-        vocab.get(token, config.unk_token_id)
-        for token in tokenize(text)
-    ]
-    return token_ids or [config.unk_token_id]
+    tokenizer = _default_word_tokenizer(config)
+    tokenizer.load_state_dict({"vocab": vocab})
+    return tokenizer.encode(text)

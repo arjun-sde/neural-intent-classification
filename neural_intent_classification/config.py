@@ -17,6 +17,15 @@ class DatasetConfig:
 
 
 @dataclass(slots=True)
+class TokenizerConfig:
+    tokenizer_type: str = "nltk_word"
+    lowercase: bool = True
+    filter_non_alnum_tokens: bool = True
+    vocab_size: int = 2000
+    min_frequency: int = 2
+
+
+@dataclass(slots=True)
 class ModelConfig:
     encoder_type: str = "mean_pool"
     embedding_dim: int = 64
@@ -42,6 +51,7 @@ class TrainingConfig:
 @dataclass(slots=True)
 class ExperimentConfig:
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
+    tokenizer: TokenizerConfig = field(default_factory=TokenizerConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
 
@@ -57,10 +67,12 @@ class ExperimentConfig:
             return cls()
 
         dataset = DatasetConfig(**payload.get("dataset", {}))
+        tokenizer = TokenizerConfig(**payload.get("tokenizer", {}))
         model = ModelConfig(**payload.get("model", {}))
         training = TrainingConfig(**payload.get("training", {}))
         return cls(
             dataset=dataset,
+            tokenizer=tokenizer,
             model=model,
             training=training,
         )

@@ -6,7 +6,10 @@ from neural_intent_classification.config import DatasetConfig
 
 
 def load_clinc150(config: DatasetConfig):
-    dataset = load_dataset(config.dataset_name)
+    dataset = load_dataset(
+        config.dataset_name,
+        "default",
+    )
     return dataset["train"], dataset["validation"], dataset["test"]
 
 

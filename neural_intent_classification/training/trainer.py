@@ -10,9 +10,11 @@ from torch.utils.data import DataLoader
 from neural_intent_classification.config import ExperimentConfig
 from neural_intent_classification.data.dataset import IntentDataset
 from neural_intent_classification.data.loader import load_clinc150
-from neural_intent_classification.data.vocab import (
-    build_vocab,
-    download_nltk_resources,
+from neural_intent_classification.data.tokenizers import (
+    BaseTokenizer,
+    build_tokenizer,
+    get_supported_tokenizer_types,
+    serialize_tokenizer_state,
 )
 from neural_intent_classification.models.classifier import IntentClassifier
 from neural_intent_classification.utils.reproducibility import (
@@ -23,21 +25,29 @@ from neural_intent_classification.utils.reproducibility import (
 
 def build_dataloaders(config: ExperimentConfig):
     train_ds, val_ds, test_ds = load_clinc150(config.dataset)
-    vocab = build_vocab(train_ds, config.dataset)
+    tokenizer = build_tokenizer(
+        dataset_config=config.dataset,
+        tokenizer_config=config.tokenizer,
+    )
+    tokenizer.prepare()
+    tokenizer.fit(
+        row["utterance"]
+        for row in train_ds
+    )
 
     train_dataset = IntentDataset(
         dataset=train_ds,
-        vocab=vocab,
+        tokenizer=tokenizer,
         config=config.dataset,
     )
     val_dataset = IntentDataset(
         dataset=val_ds,
-        vocab=vocab,
+        tokenizer=tokenizer,
         config=config.dataset,
     )
     test_dataset = IntentDataset(
         dataset=test_ds,
-        vocab=vocab,
+        tokenizer=tokenizer,
         config=config.dataset,
     )
 
@@ -59,7 +69,7 @@ def build_dataloaders(config: ExperimentConfig):
         batch_size=config.training.batch_size,
     )
 
-    return vocab, train_loader, val_loader, test_loader
+    return tokenizer, train_loader, val_loader, test_loader
 
 
 def evaluate(
@@ -96,14 +106,15 @@ def evaluate(
 def build_model_summary(
     model: IntentClassifier,
     config: ExperimentConfig,
-    vocab_size: int,
+    tokenizer_vocab_size: int,
 ) -> str:
     lines = [
         "",
         "=" * 80,
         "MODEL SUMMARY",
         "=" * 80,
-        f"Vocabulary Size: {vocab_size:,}",
+        f"Tokenizer Type: {config.tokenizer.tokenizer_type}",
+        f"Vocabulary Size: {tokenizer_vocab_size:,}",
         f"Encoder Type: {config.model.encoder_type}",
         f"Embedding Dimension: {config.model.embedding_dim}",
         f"Classifier Hidden Dimension: {config.model.hidden_dim}",
@@ -142,18 +153,21 @@ def build_model_summary(
 
 def build_checkpoint_payload(
     model: IntentClassifier,
-    vocab: dict[str, int],
+    tokenizer: BaseTokenizer,
     config: ExperimentConfig,
 ) -> dict:
-    return {
+    payload = {
         "model_state_dict": model.state_dict(),
-        "vocab": vocab,
+        "tokenizer_state": serialize_tokenizer_state(tokenizer),
         "config": config.to_dict(),
     }
+    if tokenizer.vocab is not None:
+        payload["vocab"] = tokenizer.vocab
+
+    return payload
 
 
 def train_model(config: ExperimentConfig) -> None:
-    download_nltk_resources()
     set_seed(config.training.seed)
 
     os.makedirs(
@@ -161,11 +175,13 @@ def train_model(config: ExperimentConfig) -> None:
         exist_ok=True,
     )
 
-    vocab, train_loader, val_loader, test_loader = build_dataloaders(config)
+    tokenizer, train_loader, val_loader, test_loader = (
+        build_dataloaders(config)
+    )
 
     device = torch.device(config.training.device)
     model = IntentClassifier(
-        vocab_size=len(vocab),
+        vocab_size=tokenizer.vocab_size,
         num_classes=config.dataset.num_classes,
         padding_idx=config.dataset.pad_token_id,
         config=config.model,
@@ -177,7 +193,7 @@ def train_model(config: ExperimentConfig) -> None:
         lr=config.training.learning_rate,
     )
 
-    print(build_model_summary(model, config, len(vocab)))
+    print(build_model_summary(model, config, tokenizer.vocab_size))
 
     best_acc = 0.0
     best_checkpoint_path = os.path.join(
@@ -219,7 +235,7 @@ def train_model(config: ExperimentConfig) -> None:
         if val_acc > best_acc:
             best_acc = val_acc
             torch.save(
-                build_checkpoint_payload(model, vocab, config),
+                build_checkpoint_payload(model, tokenizer, config),
                 best_checkpoint_path,
             )
             print(f"New best model saved (val acc: {val_acc:.4f})")
@@ -247,7 +263,7 @@ def train_model(config: ExperimentConfig) -> None:
     print(f"Test Accuracy: {test_acc:.4f}")
 
     torch.save(
-        build_checkpoint_payload(model, vocab, config),
+        build_checkpoint_payload(model, tokenizer, config),
         final_checkpoint_path,
     )
     print("\nTraining complete.")
@@ -310,6 +326,21 @@ def parse_args() -> argparse.Namespace:
         default=24,
     )
     parser.add_argument(
+        "--tokenizer-type",
+        default="nltk_word",
+        choices=get_supported_tokenizer_types(),
+    )
+    parser.add_argument(
+        "--tokenizer-vocab-size",
+        type=int,
+        default=2000,
+    )
+    parser.add_argument(
+        "--tokenizer-min-frequency",
+        type=int,
+        default=2,
+    )
+    parser.add_argument(
         "--device",
         default="cpu",
     )
@@ -326,6 +357,9 @@ def config_from_args(args: argparse.Namespace) -> ExperimentConfig:
     config.model.lstm_num_layers = args.lstm_num_layers
     config.model.lstm_bidirectional = not args.unidirectional_lstm
     config.dataset.max_length = args.max_length
+    config.tokenizer.tokenizer_type = args.tokenizer_type
+    config.tokenizer.vocab_size = args.tokenizer_vocab_size
+    config.tokenizer.min_frequency = args.tokenizer_min_frequency
     config.training.batch_size = args.batch_size
     config.training.learning_rate = args.learning_rate
     config.training.num_epochs = args.num_epochs

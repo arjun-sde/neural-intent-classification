@@ -5,20 +5,22 @@ import numpy as np
 from neural_intent_classification.config import ExperimentConfig
 from neural_intent_classification.data.loader import load_clinc150
 from neural_intent_classification.data.preprocessing import normalize_label
-from neural_intent_classification.data.vocab import (
-    build_vocab,
-    download_nltk_resources,
-    tokenize,
+from neural_intent_classification.data.tokenizers import (
+    build_tokenizer,
 )
 
 
 def main() -> None:
     config = ExperimentConfig()
-    download_nltk_resources()
+    tokenizer = build_tokenizer(
+        dataset_config=config.dataset,
+        tokenizer_config=config.tokenizer,
+    )
+    tokenizer.prepare()
 
     train_ds, _, _ = load_clinc150(config.dataset)
     lengths = [
-        len(tokenize(row["utterance"]))
+        len(tokenizer.tokenize(row["utterance"]))
         for row in train_ds
     ]
 
@@ -31,12 +33,16 @@ def main() -> None:
     print(f"99th Percentile: {np.percentile(lengths, 99)}")
     print("=" * 50)
 
-    vocab = build_vocab(train_ds, config.dataset)
+    tokenizer.fit(
+        row["utterance"]
+        for row in train_ds
+    )
     labels = {
         normalize_label(row["label"], config.dataset)
         for row in train_ds
     }
 
-    print(f"Vocabulary Size: {len(vocab)}")
+    print(f"Tokenizer Type: {config.tokenizer.tokenizer_type}")
+    print(f"Vocabulary Size: {tokenizer.vocab_size}")
     print(f"Unique Labels: {len(labels)}")
     print(labels)

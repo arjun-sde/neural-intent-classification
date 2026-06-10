@@ -7,44 +7,48 @@ import torch
 from neural_intent_classification.config import ExperimentConfig
 from neural_intent_classification.data.loader import load_clinc150, load_intent_mapping
 from neural_intent_classification.data.preprocessing import normalize_label, pad_sequence
-from neural_intent_classification.data.vocab import (
-    download_nltk_resources,
-    text_to_ids,
+from neural_intent_classification.data.tokenizers import (
+    BaseTokenizer,
+    get_supported_tokenizer_types,
+    load_tokenizer_from_checkpoint,
 )
 from neural_intent_classification.models.classifier import IntentClassifier
 
 
 def load_checkpoint_artifacts(
     checkpoint_path: str,
-) -> tuple[IntentClassifier, dict[str, int], ExperimentConfig]:
+    tokenizer_type_override: str | None = None,
+) -> tuple[IntentClassifier, BaseTokenizer, ExperimentConfig]:
     checkpoint = torch.load(
         checkpoint_path,
         map_location="cpu",
     )
     config = ExperimentConfig.from_dict(checkpoint.get("config"))
-    vocab = checkpoint["vocab"]
+    if tokenizer_type_override is not None:
+        config.tokenizer.tokenizer_type = tokenizer_type_override
+    tokenizer = load_tokenizer_from_checkpoint(
+        checkpoint=checkpoint,
+        dataset_config=config.dataset,
+        tokenizer_config=config.tokenizer,
+    )
     model = IntentClassifier(
-        vocab_size=len(vocab),
+        vocab_size=tokenizer.vocab_size,
         num_classes=config.dataset.num_classes,
         padding_idx=config.dataset.pad_token_id,
         config=config.model,
     )
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
-    return model, vocab, config
+    return model, tokenizer, config
 
 
 def predict_text(
     text: str,
     model: IntentClassifier,
-    vocab: dict[str, int],
+    tokenizer: BaseTokenizer,
     config: ExperimentConfig,
 ) -> int:
-    token_ids = text_to_ids(
-        text=text,
-        vocab=vocab,
-        config=config.dataset,
-    )
+    token_ids = tokenizer.encode(text)
     padded_ids, length = pad_sequence(
         token_ids=token_ids,
         max_length=config.dataset.max_length,
@@ -64,8 +68,7 @@ def predict_text(
 def evaluate_test_set(
     checkpoint_path: str,
 ) -> float:
-    download_nltk_resources()
-    model, vocab, config = load_checkpoint_artifacts(checkpoint_path)
+    model, tokenizer, config = load_checkpoint_artifacts(checkpoint_path)
     test_ds = load_clinc150(config.dataset)[2]
     correct = 0
     total = 0
@@ -74,7 +77,7 @@ def evaluate_test_set(
         prediction = predict_text(
             text=row["utterance"],
             model=model,
-            vocab=vocab,
+            tokenizer=tokenizer,
             config=config,
         )
         label = normalize_label(
@@ -86,6 +89,23 @@ def evaluate_test_set(
         total += 1
 
     return correct / total
+
+
+def resolve_intent_name(
+    label_id: int,
+    intent_mapping,
+    config: ExperimentConfig,
+) -> str:
+    if label_id == config.dataset.oos_label:
+        return "oos"
+
+    intents = intent_mapping["intents"]
+    if label_id < 0 or label_id >= len(intents):
+        raise ValueError(
+            f"Predicted label id {label_id} is outside the intent mapping."
+        )
+
+    return intents[label_id]["name"]
 
 
 def parse_args() -> argparse.Namespace:
@@ -102,21 +122,31 @@ def parse_args() -> argparse.Namespace:
         "--show-accuracy",
         action="store_true",
     )
+    parser.add_argument(
+        "--tokenizer-type",
+        choices=get_supported_tokenizer_types(),
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    download_nltk_resources()
-    model, vocab, config = load_checkpoint_artifacts(args.checkpoint)
+    model, tokenizer, config = load_checkpoint_artifacts(
+        args.checkpoint,
+        tokenizer_type_override=args.tokenizer_type,
+    )
     prediction = predict_text(
         text=args.text,
         model=model,
-        vocab=vocab,
+        tokenizer=tokenizer,
         config=config,
     )
     intent_mapping = load_intent_mapping(config.dataset)
-    intent_name = intent_mapping["intents"][prediction]["name"]
+    intent_name = resolve_intent_name(
+        prediction,
+        intent_mapping,
+        config,
+    )
 
     print(f"Intent classified: {intent_name}")
     print(f"Predicted label id: {prediction}")
